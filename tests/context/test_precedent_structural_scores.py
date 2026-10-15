@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from semantica.context import ContextGraph
 
 
-class PrecedentPatchTests(unittest.TestCase):
+class TestPrecedentStructuralScores(unittest.TestCase):
     def make_graph(self):
         graph = ContextGraph(advanced_analytics=True)
         for index in range(4):
@@ -43,6 +43,44 @@ class PrecedentPatchTests(unittest.TestCase):
         after = graph._precedent_structural_scores(set(decisions))
         self.assertNotEqual(before, after)
         self.assertTrue(graph.config["advanced_analytics"])
+
+    def test_structural_scores_equal_full_scan_with_mixed_node_types(self):
+        graph = ContextGraph(advanced_analytics=True)
+        targets = [f"target-{index}" for index in range(6)]
+        for target in targets:
+            graph.add_node(target, "entity")
+        decisions = [
+            graph.record_decision(
+                category="test", scenario=f"case {index}", reasoning="fixture",
+                outcome="retain", confidence=0.8,
+            )
+            for index in range(5)
+        ]
+        # Same-type nodes that are not recorded decisions still count.
+        graph.add_node("bare-decision", "decision")
+        # An entity hub one degree away from decisions[0]; it must be ignored.
+        graph.add_node("hub", "entity")
+        for target in targets[:4]:
+            graph.add_edge("hub", target)
+
+        # Each decision starts with one category edge.
+        graph.add_edge(decisions[0], decisions[0])  # self-loop
+        graph.add_edge(decisions[0], targets[0])
+        for target in targets[:3]:
+            graph.add_edge(decisions[1], target)
+        graph.add_edge(decisions[1], targets[0], edge_type="cites")
+        for target in targets:
+            graph.add_edge(decisions[4], target)
+        # decisions[2] and decisions[3] share degree 1; bare-decision has 0.
+
+        node_ids = set(decisions) | {"bare-decision"}
+        fast = graph._precedent_structural_scores(node_ids)
+        for node_id in node_ids:
+            with self.subTest(node_id=node_id):
+                slow = graph._calculate_structural_similarity_for_decision(
+                    node_id, "case"
+                )
+                self.assertEqual(fast[node_id], slow)
 
     def test_singleton_and_same_degree_nodes(self):
         graph = ContextGraph(advanced_analytics=True)
